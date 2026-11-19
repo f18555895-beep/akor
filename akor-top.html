@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Akor topu</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#edf0e9;--card:#f8f9f5;--ink:#1d2b25;--mute:#5d6b63;--acc:#2c4a7a;--good:#2f7d4e;--warn:#b7791f;--bad:#b4442f;--str:#9aa59d;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#141c18;--card:#1c2621;--ink:#e6ece7;--mute:#9aa89f;--acc:#8fb0e6;--good:#5fc287;--warn:#e2b152;--bad:#e27a62;--str:#55635b;color-scheme:dark}}
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Bricolage Grotesque",system-ui,sans-serif;line-height:1.4}
+main{max-width:460px;margin:0 auto;padding:16px 16px 28px}
+h1{font-size:1.4rem;margin:0 0 10px;font-weight:700}
+.lv{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:12px}
+.lv button{font:inherit;font-weight:600;padding:10px 0;border-radius:10px;border:1.5px solid var(--str);background:transparent;color:var(--ink)}
+.lv button[aria-pressed=true]{background:var(--acc);border-color:var(--acc);color:var(--bg)}
+button:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.hud{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;font-variant-numeric:tabular-nums}
+.hud b{font-size:1.6rem;font-weight:800}
+.hud span{color:var(--mute);font-size:.9rem}
+canvas{display:block;width:100%;height:420px;background:var(--card);border-radius:14px}
+.msg{min-height:2.8em;margin:10px 0;color:var(--mute)}
+.go{width:100%;font:inherit;font-weight:700;font-size:1.1rem;padding:15px;border:0;border-radius:12px;background:var(--ink);color:var(--bg)}
+.note{font-size:.8rem;color:var(--mute);margin-top:12px}
+</style>
+</head>
+<body>
+<main>
+<h1>Akor topu</h1>
+<div class="lv" id="lv"></div>
+<div class="hud"><div><span>Puan</span> <b id="sc">0</b></div><div><span>Seri</span> <b id="cb">0</b></div><div id="hp" style="font-size:1.4rem;color:var(--bad)">♥♥♥</div></div>
+<canvas id="cv"></canvas>
+<p class="msg" id="msg">Seviyeni seç ve başla.</p>
+<button class="go" id="go">Başla</button>
+<p class="note">Top yere çarptığı anda topun üstündeki akoru çal. Doğruysa top tekrar yukarı çıkar.</p>
+</main>
+<script>
+const OPEN=[40,45,50,55,59,64];
+const CH={Em:[0,2,2,0,0,0],Am:[null,0,2,2,1,0],F:[1,3,3,2,1,1],G:[3,2,0,0,0,3],C:[null,3,2,0,1,0],Dm:[null,null,0,2,3,1],D:[null,null,0,2,3,2],E:[0,2,2,1,0,0],A:[null,0,2,2,2,0],Bm:[null,2,4,4,3,2]};
+const NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const LV={Kolay:{T:6,th:50,next:1,set:['Em','Am','E','A','D']},Orta:{T:4.5,th:65,next:1,set:['Em','Am','E','A','D','C','G','Dm']},Zor:{T:3.2,th:78,next:0,set:Object.keys(CH)}};
+const $=id=>document.getElementById(id);
+const cv=$('cv'),g=cv.getContext('2d');
+let lvl='Kolay',st='idle',t0=0,chord='Em',nextC='Am',lives=3,score=0,combo=0,best=null,lastA=0,retry=false,flash=null,ctx,an,td,spec,stream,W=0,H=0,on=false;
+
+function pick(ex){const s=LV[lvl].set;let c;do{c=s[Math.random()*s.length|0]}while(c===ex);return c}
+function targets(c){return CH[c].map((f,i)=>f==null?null:{i,midi:OPEN[i]+f,freq:440*Math.pow(2,(OPEN[i]+f-69)/12)})}
+
+function analyze(c){
+  an.getFloatFrequencyData(spec);
+  const bh=ctx.sampleRate/an.fftSize,lo=Math.floor(70/bh),hi=Math.ceil(1500/bh);
+  const sl=Array.from(spec.subarray(lo,hi)).sort((a,b)=>a-b),floor=sl[sl.length>>1];
+  let mx=-Infinity;for(let i=lo;i<hi;i++)if(spec[i]>mx)mx=spec[i];
+  if(!isFinite(floor)||!isFinite(mx))return null;
+  const peak=(f,c)=>{const a=Math.max(lo,Math.round(f*Math.pow(2,-c/1200)/bh)),b=Math.round(f*Math.pow(2,c/1200)/bh);let k=a;for(let i=a;i<=b;i++)if(spec[i]>spec[k])k=i;let d=0;const y0=spec[k-1],y1=spec[k],y2=spec[k+1],den=y0-2*y1+y2;if(den<0)d=0.5*(y0-y2)/den;return{db:spec[k],f:(k+d)*bh}};
+  const T=targets(c);let sum=0,cnt=0,cs=0,cc=0;const miss=[];
+  T.forEach((t,i)=>{if(!t)return;const p=peak(t.freq,50),p2=peak(t.freq*2,50);
+    const det=p.db>floor+12||(p.db>floor+6&&p2.db>floor+14),cents=1200*Math.log2(p.f/t.freq);
+    sum+=det?1-0.3*Math.min(1,Math.abs(cents)/40):0;cnt++;if(det){cs+=Math.abs(cents);cc++}else miss.push(6-i)});
+  const pcs=new Set(T.filter(Boolean).map(t=>t.midi%12)),ex=new Set();
+  for(let i=Math.floor(80/bh);i<Math.ceil(1000/bh);i++){
+    if(!(spec[i]>spec[i-1]&&spec[i]>=spec[i+1]&&spec[i]>floor+16&&spec[i]>mx-25))continue;
+    const den=spec[i-1]-2*spec[i]+spec[i+1],d=den<0?0.5*(spec[i-1]-spec[i+1])/den:0,f=(i+d)*bh;
+    const pc=((Math.round(69+12*Math.log2(f/440))%12)+12)%12;if(pcs.has(pc))continue;
+    let e=false;for(const t of T){if(!t)continue;for(let h=1;h<=8;h++)if(Math.abs(1200*Math.log2(f/(h*t.freq)))<60)e=true}
+    if(!e)ex.add(NAMES[pc]);
+  }
+  return{pct:Math.round(Math.max(0,sum/cnt*100-Math.min(30,ex.size*8))),miss,extra:[...ex]};
+}
+
+function hud(){$('sc').textContent=score;$('cb').textContent=combo;$('hp').textContent='♥'.repeat(lives)+'♡'.repeat(3-lives)}
+function ball(){st='fall';t0=performance.now();best=null;if(!retry){chord=nextC;nextC=pick(chord)}}
+function sample(now,c){if(now-lastA<100)return;lastA=now;const r=analyze(c);if(r&&(!best||r.pct>best.pct))best=r}
+
+function frame(now){
+  const dt=(now-t0)/1000,L=LV[lvl];let y=0,sq=0,col='acc';
+  if(st==='fall'){
+    y=Math.min(1,dt/L.T);y=y*y;
+    if(on&&dt>L.T-0.3)sample(now,chord);
+    if(dt>=L.T){st='judge';t0=now}
+  }else if(st==='judge'){
+    y=1;sq=Math.max(0,1-dt*5);col=best&&best.pct>=L.th?'good':'warn';
+    if(on)sample(now,chord);
+    if(best&&best.pct>=L.th&&dt>0.3){
+      score+=best.pct;combo++;hud();flash={ok:1};retry=false;$('msg').textContent=chord+' doğru, %'+best.pct+'.';st='rise';t0=now;
+    }else if(dt>1.3){
+      lives--;combo=0;hud();flash={ok:0};retry=true;
+      let m=chord+' tutmadı'+(best?' (%'+best.pct+').':'.');
+      if(best&&best.miss.length)m+=' Eksik: '+best.miss.map(s=>s+'. tel').join(', ')+'.';
+      if(best&&best.extra.length)m+=' Fazladan: '+best.extra.join(', ')+'.';
+      $('msg').textContent=m;st=lives>0?'rise':'over';t0=now;
+      if(lives<=0){$('msg').textContent='Oyun bitti. Puan: '+score;$('go').textContent='Tekrar oyna';on=false}
+    }
+  }else if(st==='rise'){
+    const p=Math.min(1,dt/0.8);y=1-(1-Math.pow(1-p,2));y=Math.pow(1-p,2);col=flash&&flash.ok?'good':'bad';
+    if(p>=1)ball();
+  }else if(st==='over'){y=1;col='bad'}
+  draw(y,sq,col);requestAnimationFrame(frame);
+}
+
+function draw(y,sq,col){
+  const cs=getComputedStyle(document.documentElement),C=k=>cs.getPropertyValue('--'+k).trim();
+  g.clearRect(0,0,W,H);
+  const r=46,gy=H-44,top=r+14,by=top+(gy-r-top)*y;
+  g.strokeStyle=C('str');g.lineWidth=1;
+  for(let i=0;i<6;i++){g.lineWidth=1+i*.5;g.beginPath();g.moveTo(0,gy+6+i*6);g.lineTo(W,gy+6+i*6);g.stroke()}
+  g.fillStyle=C('ink');g.fillRect(0,gy,W,3);
+  g.fillStyle=C('str');g.globalAlpha=.5;g.beginPath();g.ellipse(W/2,gy-2,r*(.3+.7*y),6*(.3+.7*y),0,0,7);g.fill();g.globalAlpha=1;
+  g.save();g.translate(W/2,by+sq*r*.25);g.scale(1+sq*.25,1-sq*.25);
+  g.fillStyle=C(col);g.beginPath();g.arc(0,0,r,0,7);g.fill();
+  g.fillStyle=C('bg');g.font='800 34px "Bricolage Grotesque",system-ui,sans-serif';g.textAlign='center';g.textBaseline='middle';
+  g.fillText(chord,0,2);g.restore();
+  if(LV[lvl].next&&st!=='idle'){g.fillStyle=C('mute');g.font='600 15px "Bricolage Grotesque",system-ui,sans-serif';g.textAlign='right';g.fillText('Sıradaki: '+(retry?chord:nextC),W-14,24)}
+  if(st==='idle'){g.fillStyle=C('mute');g.font='600 16px "Bricolage Grotesque",system-ui,sans-serif';g.textAlign='center';g.fillText('Başla\'ya bas',W/2,gy-80)}
+}
+
+function size(){const d=window.devicePixelRatio||1;W=cv.clientWidth;H=cv.clientHeight;cv.width=W*d;cv.height=H*d;g.setTransform(d,0,0,d,0,0)}
+
+async function start(){
+  try{
+    if(!stream){
+      stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+      ctx=new(window.AudioContext||window.webkitAudioContext)();await ctx.resume();
+      an=ctx.createAnalyser();an.fftSize=32768;an.smoothingTimeConstant=0;ctx.createMediaStreamSource(stream).connect(an);
+      td=new Float32Array(an.fftSize);spec=new Float32Array(an.frequencyBinCount);
+    }
+    lives=3;score=0;combo=0;retry=false;hud();nextC=pick();chord=pick(nextC);on=true;
+    $('go').textContent='Bitir';$('msg').textContent='Hazır ol, top düşüyor.';ball();
+  }catch(e){$('msg').textContent='Mikrofon açılamadı. Sayfayı tarayıcıda (https adresinden) aç ve mikrofon iznini ver.'}
+}
+function stop(){on=false;st='idle';$('go').textContent='Başla';$('msg').textContent='Durdu.'}
+$('go').onclick=()=>on?stop():start();
+
+Object.keys(LV).forEach(k=>{
+  const b=document.createElement('button');b.textContent=k;b.setAttribute('aria-pressed',k===lvl);
+  b.onclick=()=>{if(on)stop();lvl=k;st='idle';chord=LV[k].set[0];nextC=LV[k].set[1];
+    document.querySelectorAll('.lv button').forEach(x=>x.setAttribute('aria-pressed',x.textContent===k));
+    $('msg').textContent=k+': '+(k==='Kolay'?'yavaş top, %50 yeterli.':k==='Orta'?'orta hız, %65 gerekli.':'hızlı top, %78 gerekli, sıradaki akor gizli.')};
+  $('lv').appendChild(b);
+});
+window.addEventListener('resize',size);size();hud();requestAnimationFrame(frame);
+</script>
+</body>
+</html>
