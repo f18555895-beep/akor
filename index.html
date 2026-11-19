@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gitar çalışma</title>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#edf0e9;--card:#f8f9f5;--ink:#1d2b25;--mute:#5d6b63;--acc:#2c4a7a;--good:#2f7d4e;--warn:#b7791f;--bad:#b4442f;--str:#9aa59d;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#141c18;--card:#1c2621;--ink:#e6ece7;--mute:#9aa89f;--acc:#8fb0e6;--good:#5fc287;--warn:#e2b152;--bad:#e27a62;--str:#55635b;color-scheme:dark}}
+:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Bricolage Grotesque",system-ui,sans-serif;line-height:1.4}
+main{max-width:460px;margin:0 auto;padding:14px 16px 28px}
+.tabs,.chips,.lv{display:grid;gap:8px;margin-bottom:12px}
+.tabs{grid-template-columns:repeat(4,1fr)}.lv{grid-template-columns:repeat(3,1fr)}.chips{grid-template-columns:repeat(4,1fr)}
+.tabs button,.chips button,.lv button{font:inherit;font-weight:600;padding:10px 0;border-radius:10px;border:1.5px solid var(--str);background:transparent;color:var(--ink)}
+button[aria-pressed=true]{background:var(--acc);border-color:var(--acc);color:var(--bg)}
+button:disabled{opacity:.45}
+button:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.go{width:100%;font:inherit;font-weight:700;font-size:1.1rem;padding:15px;border:0;border-radius:12px;background:var(--ink);color:var(--bg);margin-bottom:12px}
+.big{font-size:6rem;font-weight:800;line-height:1.05;letter-spacing:-.04em;font-variant-numeric:tabular-nums;margin:8px 0 2px}
+.msg{min-height:2.8em;margin:0 0 12px;color:var(--mute)}
+.bar{position:relative;height:12px;border-radius:6px;background:var(--str);margin:10px 0 14px}
+.bar b{position:absolute;left:50%;top:-4px;width:2px;height:20px;background:var(--ink)}
+.bar i{position:absolute;top:-6px;width:10px;height:24px;border-radius:5px;background:var(--acc);left:50%;margin-left:-5px;transition:left .1s}
+canvas{display:block;width:100%;height:400px;background:var(--card);border-radius:14px}
+.hud{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;font-variant-numeric:tabular-nums}
+.hud b{font-size:1.5rem}
+.pr{display:grid;grid-template-columns:2.6rem 1fr;gap:4px 10px;align-items:center;margin-bottom:10px}
+.pr .t{height:10px;border-radius:5px;background:var(--str)}.pr .t i{display:block;height:100%;border-radius:5px;background:var(--good)}
+.pr small{grid-column:2;color:var(--mute)}
+.note{font-size:.8rem;color:var(--mute)}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<div class="tabs" id="tabs"></div>
+<button class="go" id="mic">Mikrofonu aç</button>
+
+<section id="v-Akort">
+<div class="big" id="tn">–</div>
+<p class="msg" id="tm">Bir teli çal, hangi tel ve kaç cent sapma olduğunu göstereyim.</p>
+<div class="bar"><b></b><i id="nd"></i></div>
+</section>
+
+<section id="v-Akor" hidden>
+<div class="chips" id="cc"></div>
+<div class="big" id="cb">–</div>
+<p class="msg" id="cm">Akoru çal, hemen algılarım.</p>
+</section>
+
+<section id="v-Oyun" hidden>
+<div class="lv" id="lv"></div>
+<div class="hud"><span>Puan <b id="sc">0</b></span><span>Seri <b id="sr">0</b></span><span id="hp" style="font-size:1.3rem;color:var(--bad)">♥♥♥</span></div>
+<canvas id="cv"></canvas>
+<p class="msg" id="gm" style="margin-top:10px">Top yere çarptığında akoru çal.</p>
+<button class="go" id="gs">Başla</button>
+</section>
+
+<section id="v-İlerleme" hidden>
+<div id="pg"></div>
+<p class="note">Kayıtlar bu telefonda, tarayıcıda saklanır.</p>
+</section>
+</main>
+<script>
+const OPEN=[40,45,50,55,59,64],NAMES=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const CH={Em:[0,2,2,0,0,0],Am:[null,0,2,2,1,0],F:[1,3,3,2,1,1],G:[3,2,0,0,0,3],C:[null,3,2,0,1,0],Dm:[null,null,0,2,3,1],D:[null,null,0,2,3,2],E:[0,2,2,1,0,0],A:[null,0,2,2,2,0],Bm:[null,2,4,4,3,2]};
+const KEYS=Object.keys(CH);
+const LV={Kolay:{T:6,th:50,next:1,set:['Em','Am','E','A','D']},Orta:{T:4.5,th:65,next:1,set:['Em','Am','E','A','D','C','G','Dm']},Zor:{T:3.2,th:78,next:0,set:KEYS}};
+const $=id=>document.getElementById(id);
+let ctx,an,td,spec,stream,mode='Akort',lastEnd=0,avg=0,on=false;
+let ST={ch:{},w:{Kolay:0,Orta:0,Zor:0},hi:0};
+try{const s=JSON.parse(localStorage.getItem('gitar')||'null');if(s)ST=Object.assign(ST,s)}catch(e){}
+const save=()=>{try{localStorage.setItem('gitar',JSON.stringify(ST))}catch(e){}};
+function rec(c,p){const o=ST.ch[c]||(ST.ch[c]={n:0,s:0,b:0});o.n++;o.s+=p;o.b=Math.max(o.b,p);save()}
+
+// ---- analiz
+function prep(){
+  an.getFloatFrequencyData(spec);
+  const bh=ctx.sampleRate/an.fftSize,lo=Math.floor(70/bh),hi=Math.ceil(1500/bh);
+  const sl=Array.from(spec.subarray(lo,hi)).sort((a,b)=>a-b),floor=sl[sl.length>>1];
+  let mx=-Infinity;for(let i=lo;i<hi;i++)if(spec[i]>mx)mx=spec[i];
+  if(!isFinite(floor)||!isFinite(mx))return null;
+  return{bh,lo,floor,mx};
+}
+function score(S,c){
+  const{bh,lo,floor,mx}=S;
+  const peak=(f,ct)=>{const a=Math.max(lo,Math.round(f*Math.pow(2,-ct/1200)/bh)),b=Math.round(f*Math.pow(2,ct/1200)/bh);let k=a;for(let i=a;i<=b;i++)if(spec[i]>spec[k])k=i;let d=0;const y0=spec[k-1],y1=spec[k],y2=spec[k+1],den=y0-2*y1+y2;if(den<0)d=0.5*(y0-y2)/den;return{db:spec[k],f:(k+d)*bh}};
+  const T=CH[c].map((f,i)=>f==null?null:{i,midi:OPEN[i]+f,freq:440*Math.pow(2,(OPEN[i]+f-69)/12)});
+  let sum=0,cnt=0;const miss=[];
+  T.forEach(t=>{if(!t)return;const p=peak(t.freq,50),p2=peak(t.freq*2,50);
+    const det=p.db>floor+12||(p.db>floor+6&&p2.db>floor+14),ce=1200*Math.log2(p.f/t.freq);
+    sum+=det?1-0.3*Math.min(1,Math.abs(ce)/40):0;cnt++;if(!det)miss.push(6-t.i)});
+  const pcs=new Set(T.filter(Boolean).map(t=>t.midi%12)),ex=new Set();
+  for(let i=Math.floor(80/bh);i<Math.ceil(1000/bh);i++){
+    if(!(spec[i]>spec[i-1]&&spec[i]>=spec[i+1]&&spec[i]>floor+16&&spec[i]>mx-25))continue;
+    const den=spec[i-1]-2*spec[i]+spec[i+1],d=den<0?0.5*(spec[i-1]-spec[i+1])/den:0,f=(i+d)*bh;
+    const pc=((Math.round(69+12*Math.log2(f/440))%12)+12)%12;if(pcs.has(pc))continue;
+    let e=false;for(const t of T){if(!t)continue;for(let h=1;h<=8;h++)if(Math.abs(1200*Math.log2(f/(h*t.freq)))<60)e=true}
+    if(!e)ex.add(NAMES[pc]);
+  }
+  return{pct:Math.round(Math.max(0,sum/cnt*100-Math.min(30,ex.size*8))),miss,extra:[...ex]};
+}
+function detail(r){let m='';if(r.miss.length)m+=' Eksik: '+r.miss.map(s=>s+'. tel').join(', ')+'.';if(r.extra.length)m+=' Fazladan: '+r.extra.join(', ')+'.';return m}
+function onset(rms,now){const h=rms>0.012&&rms>avg*2.2&&now-lastEnd>800;avg=avg*.85+rms*.15;return h}
+
+// ---- akort aleti
+const STR=[['6. tel E',82.41],['5. tel A',110],['4. tel D',146.83],['3. tel G',196],['2. tel B',246.94],['1. tel E',329.63]];
+function pitch(){
+  const n=4096,o=td.length-n,sr=ctx.sampleRate,mn=Math.floor(sr/400),mxl=Math.floor(sr/70),m=n-mxl-2,c=new Float32Array(mxl+2);let gm=0;
+  for(let l=mn;l<=mxl;l++){let s=0;for(let i=0;i<m;i++)s+=td[o+i]*td[o+i+l];c[l]=s;if(s>gm)gm=s}
+  if(gm<=0)return 0;
+  let l=mn;while(l<mxl&&c[l]>c[l+1])l++;
+  let bl=0,bv=0;for(;l<mxl;l++)if(c[l]>c[l-1]&&c[l]>=c[l+1]&&c[l]>bv){bv=c[l];bl=l;if(bv>0.9*gm)break}
+  if(!bl)return 0;const den=c[bl-1]-2*c[bl]+c[bl+1],d=den<0?0.5*(c[bl-1]-c[bl+1])/den:0;
+  return sr/(bl+d);
+}
+function tunerTick(rms){
+  if(rms<0.01)return;const f=pitch();if(!f)return;
+  let b=null,bc=1e9;STR.forEach(s=>{const c=1200*Math.log2(f/s[1]);if(Math.abs(c)<Math.abs(bc)){bc=c;b=s}});
+  if(Math.abs(bc)>200)return;
+  const c=Math.round(bc);$('tn').textContent=b[0].split(' ')[2];
+  $('tn').style.color=Math.abs(c)<=5?'var(--good)':'var(--ink)';
+  $('tm').textContent=b[0]+': '+(Math.abs(c)<=5?'akortlu.':c>0?'tonu düşür ('+c+'¢ tiz).':'tonu yükselt ('+(-c)+'¢ pes).');
+  $('nd').style.left=(50+Math.max(-50,Math.min(50,c)))+'%';
+}
+
+// ---- akor tanıma / ölçme
+let sel='Otomatik',cph='idle',ct=0,cbest=null;
+function chordTick(now,rms){
+  if(cph==='idle'){if(onset(rms,now)){cph='cap';ct=now;cbest=null;$('cm').textContent='Dinliyorum…'}return}
+  const t=now-ct;if(t<110)return;
+  if(t<=900){
+    const S=prep();if(!S)return;let r=null;
+    (sel==='Otomatik'?KEYS:[sel]).forEach(c=>{const x=score(S,c);x.name=c;if(!r||x.pct>r.pct)r=x});
+    if(!cbest||r.pct>cbest.pct)cbest=r;showChord(false);
+  }else{cph='idle';lastEnd=now;showChord(true);if(cbest&&sel!=='Otomatik')rec(sel,cbest.pct)}
+}
+function showChord(fin){
+  const r=cbest;if(!r)return;
+  if(sel==='Otomatik'){const ok=r.pct>=45;$('cb').textContent=ok?r.name:'?';$('cm').textContent=ok?'Eşleşme %'+r.pct:'Akoru tanıyamadım, tekrar çal.'}
+  else{$('cb').textContent=r.pct+'%';$('cb').style.color=r.pct>=85?'var(--good)':r.pct>=60?'var(--warn)':'var(--bad)';if(fin)$('cm').textContent=(r.pct>=90?'Temiz akor.':r.pct>=70?'İyi.':'Tekrar dene.')+detail(r)}
+}
+
+// ---- oyun
+let lvl='Kolay',gs='idle',t0=0,chord='Em',nextC='Am',lives=3,score_=0,combo=0,best=null,retry=false,flash=0,W=0,H=0,playing=false;
+const g=$('cv').getContext('2d');
+const pick=ex=>{const s=LV[lvl].set;let c;do{c=s[Math.random()*s.length|0]}while(c===ex&&s.length>1);return c};
+const unlocked=l=>l==='Kolay'||(l==='Orta'&&ST.w.Kolay>=8)||(l==='Zor'&&ST.w.Orta>=8);
+function hud(){$('sc').textContent=score_;$('sr').textContent=combo;$('hp').textContent='♥'.repeat(lives)+'♡'.repeat(3-lives)}
+function ball(){gs='fall';t0=performance.now();best=null;if(!retry){chord=nextC;nextC=pick(chord)}}
+function samp(){const S=prep();if(!S)return;const r=score(S,chord);if(!best||r.pct>best.pct)best=r}
+function gameTick(now){
+  if(!playing)return;const L=LV[lvl],dt=(now-t0)/1000;
+  if(gs==='fall'){if(dt>L.T-0.3)samp();if(dt>=L.T){gs='judge';t0=now}}
+  else if(gs==='judge'){
+    samp();
+    if(best&&best.pct>=L.th&&dt>0.25){score_+=best.pct;combo++;ST.w[lvl]++;rec(chord,best.pct);ST.hi=Math.max(ST.hi,score_);save();hud();flash=1;retry=false;$('gm').textContent=chord+' doğru, %'+best.pct+'.';gs='rise';t0=now;buildLv()}
+    else if(dt>1.2){lives--;combo=0;rec(chord,best?best.pct:0);hud();flash=0;retry=true;$('gm').textContent=chord+' tutmadı'+(best?' (%'+best.pct+').'+detail(best):'.');
+      if(lives<=0){gs='over';playing=false;$('gm').textContent='Oyun bitti. Puan: '+score_;$('gs').textContent='Tekrar oyna'}else{gs='rise';t0=now}}
+  }else if(gs==='rise'&&dt>=0.8)ball();
+}
+function draw(now){
+  if(mode==='Oyun'){
+    const cs=getComputedStyle(document.documentElement),C=k=>cs.getPropertyValue('--'+k).trim(),dt=(now-t0)/1000,L=LV[lvl];
+    let y=0,col='acc';
+    if(gs==='fall')y=Math.pow(Math.min(1,dt/L.T),2);
+    else if(gs==='judge'){y=1;col=best&&best.pct>=L.th?'good':'warn'}
+    else if(gs==='rise'){y=Math.pow(1-Math.min(1,dt/0.8),2);col=flash?'good':'bad'}
+    else if(gs==='over'){y=1;col='bad'}
+    const r=46,gy=H-30,by=r+14+(gy-r-r-14)*y,sq=gs==='judge'?Math.max(0,1-dt*5):0;
+    g.clearRect(0,0,W,H);g.fillStyle=C('ink');g.fillRect(0,gy,W,3);
+    g.globalAlpha=.4;g.fillStyle=C('str');g.beginPath();g.ellipse(W/2,gy-2,r*(.3+.7*y),6*(.3+.7*y),0,0,7);g.fill();g.globalAlpha=1;
+    g.save();g.translate(W/2,by+sq*r*.25);g.scale(1+sq*.25,1-sq*.25);g.fillStyle=C(col);g.beginPath();g.arc(0,0,r,0,7);g.fill();
+    g.fillStyle=C('bg');g.font='800 34px "Bricolage Grotesque",system-ui,sans-serif';g.textAlign='center';g.textBaseline='middle';g.fillText(chord,0,2);g.restore();
+    g.fillStyle=C('mute');g.font='600 15px "Bricolage Grotesque",system-ui,sans-serif';g.textAlign='right';
+    if(L.next&&gs!=='idle')g.fillText('Sıradaki: '+(retry?chord:nextC),W-14,24);
+  }
+  requestAnimationFrame(draw);
+}
+function size(){const c=$('cv'),d=window.devicePixelRatio||1;W=c.clientWidth;H=c.clientHeight;c.width=W*d;c.height=H*d;g.setTransform(d,0,0,d,0,0)}
+function buildLv(){
+  $('lv').innerHTML='';Object.keys(LV).forEach(k=>{const b=document.createElement('button');const u=unlocked(k);
+    b.textContent=u?k:'🔒 '+k;b.disabled=!u;b.setAttribute('aria-pressed',k===lvl);
+    b.onclick=()=>{playing=false;gs='idle';lvl=k;$('gs').textContent='Başla';$('gm').textContent=k+': %'+LV[k].th+' gerekli.';chord=LV[k].set[0];nextC=LV[k].set[1];buildLv()};$('lv').appendChild(b)});
+}
+$('gs').onclick=()=>{
+  if(!on){$('gm').textContent='Önce mikrofonu aç.';return}
+  if(playing){playing=false;gs='idle';$('gs').textContent='Başla';return}
+  lives=3;score_=0;combo=0;retry=false;nextC=pick();chord=pick(nextC);playing=true;hud();$('gs').textContent='Bitir';$('gm').textContent='Hazır ol.';ball();
+};
+
+// ---- ilerleme
+function progress(){
+  let h='<p class="msg">'+(ST.hi?'En yüksek oyun puanı: '+ST.hi+'. ':'')+'Galibiyet: Kolay '+ST.w.Kolay+', Orta '+ST.w.Orta+', Zor '+ST.w.Zor+'.'
+   +(ST.w.Kolay<8?' Orta için Kolay’da '+(8-ST.w.Kolay)+' galibiyet daha.':ST.w.Orta<8?' Zor için Orta’da '+(8-ST.w.Orta)+' galibiyet daha.':'')+'</p>';
+  let weak=null,wa=101;
+  KEYS.forEach(c=>{const o=ST.ch[c]||{n:0,s:0,b:0},a=o.n?Math.round(o.s/o.n):0;if(o.n>=3&&a<wa){wa=a;weak=c}
+    h+='<div class="pr"><b>'+c+'</b><div class="t"><i style="width:'+a+'%"></i></div><small>'+(o.n?'ort. %'+a+' · en iyi %'+o.b+' · '+o.n+' deneme':'henüz denenmedi')+'</small></div>'});
+  if(weak)h='<p class="msg">En çok çalışman gereken akor: <b>'+weak+'</b>.</p>'+h;
+  $('pg').innerHTML=h;
+}
+
+// ---- ses ve sekmeler
+async function mic(){
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+    ctx=new(window.AudioContext||window.webkitAudioContext)();await ctx.resume();
+    an=ctx.createAnalyser();an.fftSize=16384;an.smoothingTimeConstant=0;ctx.createMediaStreamSource(stream).connect(an);
+    td=new Float32Array(an.fftSize);spec=new Float32Array(an.frequencyBinCount);on=true;$('mic').hidden=true;setInterval(tick,40);
+  }catch(e){$('mic').textContent='Mikrofon açılamadı, izni verip tekrar dene'}
+}
+function tick(){
+  an.getFloatTimeDomainData(td);let s=0;for(let i=td.length-1024;i<td.length;i++)s+=td[i]*td[i];const rms=Math.sqrt(s/1024),now=performance.now();
+  if(mode==='Akort')tunerTick(rms);else if(mode==='Akor')chordTick(now,rms);else if(mode==='Oyun')gameTick(now);
+}
+$('mic').onclick=mic;
+['Akort','Akor','Oyun','İlerleme'].forEach(k=>{
+  const b=document.createElement('button');b.textContent=k;b.setAttribute('aria-pressed',k===mode);
+  b.onclick=()=>{mode=k;playing=false;gs='idle';cph='idle';$('gs').textContent='Başla';
+    document.querySelectorAll('.tabs button').forEach(x=>x.setAttribute('aria-pressed',x.textContent===k));
+    ['Akort','Akor','Oyun','İlerleme'].forEach(v=>$('v-'+v).hidden=v!==k);
+    if(k==='Oyun')size();if(k==='İlerleme')progress();if(k==='Oyun')buildLv()};
+  $('tabs').appendChild(b);
+});
+['Otomatik',...KEYS].forEach(k=>{const b=document.createElement('button');b.textContent=k;b.setAttribute('aria-pressed',k===sel);
+  b.onclick=()=>{sel=k;cph='idle';$('cb').textContent='–';$('cb').style.color='';$('cm').textContent=k==='Otomatik'?'Akoru çal, hangisi olduğunu söyleyeyim.':k+' çal, yüzde kaç doğru olduğunu söyleyeyim.';
+    document.querySelectorAll('#cc button').forEach(x=>x.setAttribute('aria-pressed',x.textContent===k))};$('cc').appendChild(b)});
+window.addEventListener('resize',size);hud();requestAnimationFrame(draw);
+</script>
+</body>
+</html>
